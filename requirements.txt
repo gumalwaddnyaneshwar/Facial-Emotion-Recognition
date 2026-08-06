@@ -1,0 +1,44 @@
+# DeepFER — requirements.txt
+#
+# These versions are pinned deliberately, not left open-ended — they
+# reflect the exact combination that was proven to work together after
+# resolving a real dependency conflict between TensorFlow, mediapipe,
+# and jax (mediapipe pins protobuf<5 and older ml_dtypes; TensorFlow
+# and Keras want newer versions of both). Installing "latest" for each
+# package independently WILL reintroduce that conflict.
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# You will likely see a pip dependency-resolver warning mentioning
+# "tensorflow-intel requires keras<2.16" during install. This is
+# expected and harmless — the app is confirmed working with the
+# keras version pinned below despite that warning.
+
+# ── Core ML pipeline ─────────────────────────────────────────────
+tensorflow==2.15.1
+keras==3.12.3
+numpy>=1.23.5,<2.0
+ml-dtypes~=0.3.1
+protobuf>=4.25.3,<5
+jax<0.4.26
+jaxlib<0.4.26
+
+# ── Computer vision / face detection ─────────────────────────────
+mediapipe==0.10.14
+opencv-python
+opencv-contrib-python
+Pillow
+
+# ── App (Streamlit) ───────────────────────────────────────────────
+streamlit
+pandas
+
+# ── PDF report export ─────────────────────────────────────────────
+reportlab
+matplotlib
+
+# ── REST API ───────────────────────────────────────────────────────
+fastapi
+uvicorn
+python-multipart
