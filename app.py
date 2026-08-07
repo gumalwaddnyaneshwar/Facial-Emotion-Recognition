@@ -163,6 +163,13 @@ def render_dashboard(session: EmotionSession, key_prefix: str):
 
     st.markdown("### 📊 Session Analytics")
 
+    if summary["total_predictions"] < 5:
+        st.caption(
+            f"⚠️ Only {summary['total_predictions']} prediction(s) in this session — "
+            f"'Dominant emotion' and 'Satisfaction score' below are based on very few "
+            f"samples and may not represent the full clip reliably."
+        )
+
     st.markdown('<div class="deepfer-card">', unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
     col1.metric("Total predictions", summary["total_predictions"])
@@ -462,11 +469,43 @@ elif mode == "Video file":
 
     uploaded_video = st.file_uploader("Upload a video", type=["mp4", "avi", "mov", "mkv"])
 
-    if uploaded_video is not None and st.button("Analyze video"):
+    if uploaded_video is not None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
             tmp.write(uploaded_video.read())
             video_path = tmp.name
 
+        # Peek at the video's duration up front so we can warn if the chosen
+        # sample rate is longer than the clip itself — that combination
+        # silently produces 0 or 1 predictions, which otherwise looks like
+        # a bug rather than a sampling-rate mismatch.
+        _probe_cap = cv2.VideoCapture(video_path)
+        _probe_fps = _probe_cap.get(cv2.CAP_PROP_FPS) or 25
+        _probe_frames = int(_probe_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        _probe_cap.release()
+        video_duration = _probe_frames / _probe_fps if _probe_fps else 0
+
+        st.caption(f"Clip length: ~{video_duration:.1f} seconds ({_probe_frames} frames)")
+
+        if sample_rate >= video_duration:
+            st.warning(
+                f"Sample rate ({sample_rate:.1f}s) is longer than this clip "
+                f"(~{video_duration:.1f}s) — you'll get at most one prediction, "
+                f"which won't be a reliable summary of the whole video. "
+                f"Lower the sample rate below {video_duration:.1f}s for a real timeline."
+            )
+        elif video_duration / sample_rate < 5:
+            st.info(
+                f"This sample rate will only capture about "
+                f"{int(video_duration / sample_rate)} frame(s) from this short clip. "
+                f"Results (especially 'dominant emotion') will be noisy with so few "
+                f"samples — consider lowering the sample rate for a more stable result."
+            )
+
+        analyze_clicked = st.button("Analyze video")
+    else:
+        analyze_clicked = False
+
+    if uploaded_video is not None and analyze_clicked:
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS) or 25
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
