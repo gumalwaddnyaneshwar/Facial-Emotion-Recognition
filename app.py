@@ -10,6 +10,7 @@ Run with:
     streamlit run app.py
 """
 
+import os
 import time
 import tempfile
 
@@ -580,72 +581,98 @@ elif mode == "Live webcam":
 
     if run:
         camera = cv2.VideoCapture(0)
-        last_log_time = 0.0
-        session = st.session_state.webcam_session
-        tracker = st.session_state.webcam_tracker
-        smoother = st.session_state.webcam_smoother
-        ag_cache = st.session_state.webcam_age_gender_cache
 
-        while run:
-            ret, frame = camera.read()
-            if not ret:
-                st.error("Could not read from webcam.")
-                break
+        # Test whether a real camera actually opened, rather than assuming
+        # one exists. This is what makes this safe to deploy publicly: on
+        # your own machine with a working webcam, isOpened() is True and
+        # everything below runs exactly as it always has — nothing changes
+        # for local use. On a machine with no camera (e.g. a cloud server,
+        # which is what Streamlit Community Cloud runs your app on once
+        # deployed), isOpened() is False, and we stop here with a clear
+        # explanation instead of crashing or hanging on empty reads.
+        if not camera.isOpened():
+            camera.release()
+            is_likely_cloud = os.path.exists("/mount/src")  # Streamlit Cloud's known repo mount path
+            if is_likely_cloud:
+                st.warning(
+                    "🎥 Live webcam isn't available on this hosted version of the app — "
+                    "cloud servers don't have a physical camera attached. This mode only "
+                    "works when the app is run locally on a machine with a webcam. "
+                    "Try **Image upload** or **Video file** instead, both of which work "
+                    "fully here."
+                )
+            else:
+                st.error(
+                    "No webcam detected on this machine. Check that a camera is connected "
+                    "and not already in use by another application, then try again."
+                )
+        else:
+            last_log_time = 0.0
+            session = st.session_state.webcam_session
+            tracker = st.session_state.webcam_tracker
+            smoother = st.session_state.webcam_smoother
+            ag_cache = st.session_state.webcam_age_gender_cache
 
-            if landmark_overlay is not None:
-                frame = landmark_overlay.draw(frame)
+            while run:
+                ret, frame = camera.read()
+                if not ret:
+                    st.error("Lost connection to the webcam mid-session.")
+                    break
 
-            faces = detector.detect(frame)
-            boxes = [f["box"] for f in faces]
-            tracked = tracker.update(boxes)
-            now = time.time() - session.start_time
-            should_log = now - last_log_time >= webcam_log_interval
+                if landmark_overlay is not None:
+                    frame = landmark_overlay.draw(frame)
 
-            for track_id, box in tracked.items():
-                # Match the tracked box back to its detection (tracker only
-                # returns boxes, not the full detection dict) so we can crop.
-                matching_face = min(faces, key=lambda f: np.linalg.norm(
-                    np.array(f["box"][:2]) - np.array(box[:2])))
-                crop = detector.crop(frame, matching_face, target_size=(224, 224))
-                if crop is None:
-                    continue
+                faces = detector.detect(frame)
+                boxes = [f["box"] for f in faces]
+                tracked = tracker.update(boxes)
+                now = time.time() - session.start_time
+                should_log = now - last_log_time >= webcam_log_interval
 
-                _, _, raw_scores = classify_face(classifier, crop)
-                # Smooth over recent frames for this specific person — this
-                # is what stops "happy" flickering to "neutral" and back
-                # between consecutive frames of the same expression.
-                emotion, confidence, all_scores = smoother.update(track_id, raw_scores)
+                for track_id, box in tracked.items():
+                    # Match the tracked box back to its detection (tracker only
+                    # returns boxes, not the full detection dict) so we can crop.
+                    matching_face = min(faces, key=lambda f: np.linalg.norm(
+                        np.array(f["box"][:2]) - np.array(box[:2])))
+                    crop = detector.crop(frame, matching_face, target_size=(224, 224))
+                    if crop is None:
+                        continue
 
-                label_prefix = f"Person {track_id}"
-                if age_gender_estimator is not None:
-                    # Only re-run the age/gender model on the same throttled
-                    # cadence as logging — every frame would needlessly cost
-                    # two extra DNN forward passes per person per frame.
-                    if should_log or track_id not in ag_cache:
-                        ag_result = age_gender_estimator.predict(crop)
-                        ag_cache[track_id] = (ag_result["gender"], ag_result["age_range"], ag_result["age_estimate"])
-                    gender, age_range, age_estimate = ag_cache[track_id]
-                    label_prefix = f"Person {track_id} ({gender}, ~{age_estimate})"
+                    _, _, raw_scores = classify_face(classifier, crop)
+                    # Smooth over recent frames for this specific person — this
+                    # is what stops "happy" flickering to "neutral" and back
+                    # between consecutive frames of the same expression.
+                    emotion, confidence, all_scores = smoother.update(track_id, raw_scores)
 
-                frame = draw_label(frame, box, emotion, confidence, label_prefix=label_prefix)
+                    label_prefix = f"Person {track_id}"
+                    if age_gender_estimator is not None:
+                        # Only re-run the age/gender model on the same throttled
+                        # cadence as logging — every frame would needlessly cost
+                        # two extra DNN forward passes per person per frame.
+                        if should_log or track_id not in ag_cache:
+                            ag_result = age_gender_estimator.predict(crop)
+                            ag_cache[track_id] = (ag_result["gender"], ag_result["age_range"], ag_result["age_estimate"])
+                        gender, age_range, age_estimate = ag_cache[track_id]
+                        label_prefix = f"Person {track_id} ({gender}, ~{age_estimate})"
+
+                    frame = draw_label(frame, box, emotion, confidence, label_prefix=label_prefix)
+
+                    if should_log:
+                        gender, age_range, _ = ag_cache.get(track_id, (None, None, None))
+                        session.add_record(now, track_id, emotion, confidence, all_scores,
+                                           gender=gender, age_range=age_range)
 
                 if should_log:
-                    gender, age_range, _ = ag_cache.get(track_id, (None, None, None))
-                    session.add_record(now, track_id, emotion, confidence, all_scores,
-                                       gender=gender, age_range=age_range)
+                    last_log_time = now
 
-            if should_log:
-                last_log_time = now
+                frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
 
-            frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
+                # Re-check the checkbox's current value each loop iteration —
+                # this is what lets clicking "Start camera" off actually stop
+                # the loop (Streamlit interrupts this run and starts a fresh
+                # one with run=False, which then just skips the loop below).
+                run = st.session_state.get("webcam_run_checkbox", run)
 
-            # Re-check the checkbox's current value each loop iteration —
-            # this is what lets clicking "Start camera" off actually stop
-            # the loop (Streamlit interrupts this run and starts a fresh
-            # one with run=False, which then just skips the loop below).
-            run = st.session_state.get("webcam_run_checkbox", run)
-
-        camera.release()
+            camera.release()
 
     with dashboard_placeholder:
         session = st.session_state.webcam_session
