@@ -1,9 +1,2 @@
-# packages.txt — Streamlit Cloud reads this automatically and installs
-# these as apt (system-level) packages BEFORE installing requirements.txt.
-#
-# These two are needed by mediapipe's native backend on headless Linux
-# servers (like Streamlit Cloud) — without them, mediapipe can fail to
-# import even when opencv is correctly set to the headless variant,
-# since this is a mediapipe-level requirement, not an opencv one.
 libgl1
 libglib2.0-0
