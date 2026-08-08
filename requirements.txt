@@ -26,8 +26,17 @@ jaxlib<0.4.26
 
 # ── Computer vision / face detection ─────────────────────────────
 mediapipe==0.10.14
-opencv-python
-opencv-contrib-python
+# IMPORTANT: opencv-contrib-python-headless, NOT opencv-python or
+# opencv-contrib-python. The regular (non-headless) builds expect
+# graphical display libraries (libGL.so.1 etc.) that exist on a
+# Windows desktop but NOT on Streamlit Cloud's headless Linux servers
+# — using them there causes an ImportError at startup. The headless
+# build is functionally identical for everything this app does (no
+# GUI windows are used anywhere). Only ONE cv2 package should ever be
+# listed here — opencv-python, opencv-contrib-python, and their
+# headless variants all install into the same `cv2` module name, and
+# having more than one installed risks a silent version conflict.
+opencv-contrib-python-headless
 Pillow
 
 # ── App (Streamlit) ───────────────────────────────────────────────
@@ -38,7 +47,11 @@ pandas
 reportlab
 matplotlib
 
-# ── REST API ───────────────────────────────────────────────────────
+# ── REST API (only needed if you also run/deploy api.py separately —
+#    app.py, the file being deployed to Streamlit Cloud, does not
+#    import these at all, so they add install time without being used
+#    there. Harmless to leave in; remove if you want a faster Streamlit
+#    Cloud build and aren't deploying the API too.) ──────────────────
 fastapi
 uvicorn
 python-multipart
